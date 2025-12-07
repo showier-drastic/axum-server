@@ -15,7 +15,7 @@ use std::{
     fmt,
     future::poll_fn,
     io::{self, ErrorKind},
-    net::SocketAddr as IpSocketAddr,
+    net::{Ipv4Addr, SocketAddr as IpSocketAddr},
     time::Duration,
 };
 use tokio::{
@@ -66,7 +66,9 @@ pub fn bind<A: Address>(addr: A) -> Server<A> {
 }
 
 /// Create a [`Server`] from existing `std::net::TcpListener`.
-pub fn from_tcp(listener: std::net::TcpListener) -> io::Result<Server<IpSocketAddr>> {
+pub fn from_tcp(
+    listener: std::net::TcpListener,
+) -> io::Result<Server<(IpSocketAddr, IpSocketAddr)>> {
     Ok(Server::from_listener(TcpListener::from_std(listener)?))
 }
 
@@ -111,17 +113,22 @@ impl AddrListener<UnixStream, UnixSocketAddr> for UnixListener {
     }
 }
 
-impl AddrListener<TcpStream, IpSocketAddr> for TcpListener {
-    async fn bind_to(addr: IpSocketAddr) -> io::Result<Self> {
-        TcpListener::bind(addr).await
+impl AddrListener<TcpStream, (IpSocketAddr, IpSocketAddr)> for TcpListener {
+    async fn bind_to(addr: (IpSocketAddr, IpSocketAddr)) -> io::Result<Self> {
+        TcpListener::bind(addr.0).await
     }
 
-    async fn accept_stream(&self) -> io::Result<(TcpStream, IpSocketAddr)> {
-        self.accept().await
+    async fn accept_stream(&self) -> io::Result<(TcpStream, (IpSocketAddr, IpSocketAddr))> {
+        let (stream, socket_addr) = self.accept().await?;
+        let local_addr = stream.local_addr()?;
+        Ok((stream, (local_addr, socket_addr)))
     }
 
-    fn get_local_addr(&self) -> io::Result<IpSocketAddr> {
-        self.local_addr()
+    fn get_local_addr(&self) -> io::Result<(IpSocketAddr, IpSocketAddr)> {
+        Ok((
+            self.local_addr()?,
+            IpSocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+        ))
     }
 }
 
@@ -140,7 +147,7 @@ impl Address for UnixSocketAddr {
     type Listener = UnixListener;
 }
 
-impl Address for IpSocketAddr {
+impl Address for (IpSocketAddr, IpSocketAddr) {
     type Stream = TcpStream;
     type Listener = TcpListener;
 }
